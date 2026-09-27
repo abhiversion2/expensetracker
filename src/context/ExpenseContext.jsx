@@ -130,10 +130,27 @@ export function ExpenseProvider({ children }) {
       setCloudStatus('connecting');
       const remoteData = await fetchRemoteGroupData(groupId);
       if (remoteData && remoteData.group) {
-        if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
+        if (remoteData.members && remoteData.members.length > 0) {
+          setMembers(prev => {
+            const hasChanged =
+              prev.length !== remoteData.members.length ||
+              prev.some((m, i) => m.id !== remoteData.members[i]?.id || m.name !== remoteData.members[i]?.name);
+            return hasChanged ? remoteData.members : prev;
+          });
+        }
         if (remoteData.expenses !== null && remoteData.expenses !== undefined) {
           const sampleIds = new Set(['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']);
-          setExpenses(remoteData.expenses.filter(e => !sampleIds.has(e.id)));
+          const clean = remoteData.expenses.filter(e => !sampleIds.has(e.id));
+          setExpenses(prev => {
+            if (prev.length !== clean.length) return clean;
+            const hasChanged = prev.some(
+              (e, i) =>
+                e.id !== clean[i]?.id ||
+                e.amount !== clean[i]?.amount ||
+                e.description !== clean[i]?.description
+            );
+            return hasChanged ? clean : prev;
+          });
         }
         if (remoteData.group?.settings) {
           setSettings(prev => ({
@@ -179,10 +196,27 @@ export function ExpenseProvider({ children }) {
         client.from('expenses').delete().in('id', ['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']).eq('group_id', groupId);
 
         if (remoteData && remoteData.group) {
-          if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
+          if (remoteData.members && remoteData.members.length > 0) {
+            setMembers(prev => {
+              const hasChanged =
+                prev.length !== remoteData.members.length ||
+                prev.some((m, i) => m.id !== remoteData.members[i]?.id || m.name !== remoteData.members[i]?.name);
+              return hasChanged ? remoteData.members : prev;
+            });
+          }
           if (remoteData.expenses !== null && remoteData.expenses !== undefined) {
             const sampleIds = new Set(['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']);
-            setExpenses(remoteData.expenses.filter(e => !sampleIds.has(e.id)));
+            const clean = remoteData.expenses.filter(e => !sampleIds.has(e.id));
+            setExpenses(prev => {
+              if (prev.length !== clean.length) return clean;
+              const hasChanged = prev.some(
+                (e, i) =>
+                  e.id !== clean[i]?.id ||
+                  e.amount !== clean[i]?.amount ||
+                  e.description !== clean[i]?.description
+              );
+              return hasChanged ? clean : prev;
+            });
           }
           if (remoteData.group?.settings) {
             setSettings(prev => ({

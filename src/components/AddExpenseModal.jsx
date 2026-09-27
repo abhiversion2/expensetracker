@@ -41,33 +41,46 @@ export default function AddExpenseModal() {
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Initialize or reset form state
-  useEffect(() => {
-    if (!isAddExpenseOpen) return;
+  const wasOpenRef = React.useRef(false);
 
-    if (editingExpense) {
-      setAmount(String(editingExpense.amount));
-      setDescription(editingExpense.description);
-      setPaidBy(editingExpense.paidBy);
-      setSelectedParticipants(
-        editingExpense.participants?.map(p => p.memberId) || members.map(m => m.id)
-      );
-      setCategory(editingExpense.category || categories[0]?.name || 'Food & Dining');
-      setDate(editingExpense.date || getCurrentDateTime().date);
-      setTime(editingExpense.time || getCurrentDateTime().time);
-      setNotes(editingExpense.notes || '');
-    } else {
-      const { date: curDate, time: curTime } = getCurrentDateTime();
-      setAmount('');
-      setDescription('');
-      setPaidBy(members[0]?.id || '');
-      setSelectedParticipants(members.map(m => m.id)); // Default split equally among all
-      setCategory(categories[0]?.name || 'Food & Dining');
-      setDate(curDate);
-      setTime(curTime);
-      setNotes('');
+  // Initialize form state ONLY when opening the modal or editing a different expense
+  useEffect(() => {
+    if (isAddExpenseOpen && !wasOpenRef.current) {
+      if (editingExpense) {
+        setAmount(String(editingExpense.amount));
+        setDescription(editingExpense.description);
+        setPaidBy(editingExpense.paidBy);
+        setSelectedParticipants(
+          editingExpense.participants?.map(p => p.memberId) || members.map(m => m.id)
+        );
+        setCategory(editingExpense.category || categories[0]?.name || 'Food & Dining');
+        setDate(editingExpense.date || getCurrentDateTime().date);
+        setTime(editingExpense.time || getCurrentDateTime().time);
+        setNotes(editingExpense.notes || '');
+      } else {
+        const { date: curDate, time: curTime } = getCurrentDateTime();
+        setAmount('');
+        setDescription('');
+        setPaidBy(members[0]?.id || '');
+        setSelectedParticipants(members.map(m => m.id)); // Default split equally among all
+        setCategory(categories[0]?.name || 'Food & Dining');
+        setDate(curDate);
+        setTime(curTime);
+        setNotes('');
+      }
     }
-  }, [isAddExpenseOpen, editingExpense, members, categories]);
+    wasOpenRef.current = isAddExpenseOpen;
+  }, [isAddExpenseOpen, editingExpense]);
+
+  // Set default payer if not yet assigned
+  useEffect(() => {
+    if (isAddExpenseOpen && !paidBy && members.length > 0) {
+      setPaidBy(members[0].id);
+      if (selectedParticipants.length === 0) {
+        setSelectedParticipants(members.map(m => m.id));
+      }
+    }
+  }, [isAddExpenseOpen, members, paidBy, selectedParticipants.length]);
 
   if (!isAddExpenseOpen) return null;
 
