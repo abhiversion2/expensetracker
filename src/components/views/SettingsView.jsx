@@ -1,6 +1,7 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useExpenses } from '../../context/ExpenseContext';
 import { downloadFile, exportGroupExpensesCsv } from '../../utils/exportUtils';
+import { getSupabaseCredentials } from '../../utils/supabase';
 import {
   Settings as SettingsIcon,
   Moon,
@@ -16,7 +17,61 @@ import {
   Tag,
   Check,
   RotateCcw,
+  Cloud,
+  CloudOff,
+  Copy,
+  Share2,
+  ExternalLink,
+  Database,
+  Code,
+  CheckCircle2,
 } from 'lucide-react';
+
+const SQL_SCHEMA_SNIPPET = `-- Run this in Supabase Dashboard -> SQL Editor
+CREATE TABLE IF NOT EXISTS public.groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT 'Apna Gang',
+  currency TEXT DEFAULT '₹',
+  settings JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.members (
+  id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  avatar_color TEXT,
+  initials TEXT,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  paid_by TEXT NOT NULL,
+  date TEXT NOT NULL,
+  time TEXT,
+  category TEXT,
+  notes TEXT,
+  participants JSONB DEFAULT '[]'::jsonb,
+  split_type TEXT DEFAULT 'equal',
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public access for groups" ON public.groups FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access for members" ON public.members FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access for expenses" ON public.expenses FOR ALL USING (true) WITH CHECK (true);
+
+BEGIN;
+  DROP PUBLICATION IF EXISTS supabase_realtime;
+  CREATE PUBLICATION supabase_realtime FOR TABLE public.groups, public.members, public.expenses;
+COMMIT;`;
 
 export default function SettingsView() {
   const {
@@ -30,9 +85,70 @@ export default function SettingsView() {
     setConfirmDialog,
     showToast,
     setCurrentView,
+    // Supabase
+    groupId,
+    changeGroupId,
+    cloudStatus,
+    cloudLastSynced,
+    refreshCloudData,
   } = useExpenses();
 
   const fileInputRef = useRef(null);
+
+  // Cloud sync form states
+  const creds = getSupabaseCredentials();
+  const [supabaseUrl, setSupabaseUrl] = useState(creds.url);
+  const [supabaseKey, setSupabaseKey] = useState(creds.key);
+  const [groupInput, setGroupInput] = useState(groupId);
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  // Save Supabase credentials directly
+  const handleSaveCredentials = () => {
+    if (!supabaseUrl.trim() || !supabaseKey.trim()) {
+      showToast('Please enter both Supabase URL and Anon Key', 'error');
+      return;
+    }
+    localStorage.setItem('supabase_custom_url', supabaseUrl.trim());
+    localStorage.setItem('supabase_custom_key', supabaseKey.trim());
+    showToast('Supabase credentials saved! Connecting...', 'success');
+    setTimeout(() => {
+      window.location.reload();
+    }, 600);
+  };
+
+  const handleClearCredentials = () => {
+    localStorage.removeItem('supabase_custom_url');
+    localStorage.removeItem('supabase_custom_key');
+    setSupabaseUrl('');
+    setSupabaseKey('');
+    showToast('Credentials cleared. Reverted to offline local storage.', 'info');
+    setTimeout(() => {
+      window.location.reload();
+    }, 600);
+  };
+
+  const handleSwitchGroup = () => {
+    if (!groupInput.trim()) return;
+    changeGroupId(groupInput.trim());
+  };
+
+  const handleCopyInviteLink = () => {
+    const origin = window.location.origin + window.location.pathname;
+    const inviteUrl = `${origin}?group=${encodeURIComponent(groupId)}`;
+    navigator.clipboard.writeText(inviteUrl);
+    setCopiedLink(true);
+    showToast('Group invite link copied to clipboard! Share on WhatsApp 🎉', 'success');
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SQL_SCHEMA_SNIPPET);
+    setCopiedSql(true);
+    showToast('SQL schema copied! Paste it in Supabase SQL Editor.', 'success');
+    setTimeout(() => setCopiedSql(false), 2500);
+  };
 
   // Export complete JSON Backup
   const handleBackupJson = () => {
@@ -70,7 +186,6 @@ export default function SettingsView() {
             confirmText: 'Restore Now',
             isDanger: false,
             onConfirm: () => {
-              // Direct restore
               localStorage.setItem('apna_gang_members', JSON.stringify(parsed.members));
               localStorage.setItem('apna_gang_expenses', JSON.stringify(parsed.expenses));
               if (parsed.categories) {
@@ -118,7 +233,7 @@ export default function SettingsView() {
   };
 
   return (
-    <div className="main-content animate-fade-in">
+    <div className="main-content animate-fade-in" style={{ paddingBottom: '30px' }}>
       {/* Settings Header */}
       <div className="card card-gradient-hero">
         <span className="badge badge-primary">Preferences</span>
@@ -126,8 +241,146 @@ export default function SettingsView() {
           App & Group Settings
         </h2>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-          Customize group name, currency, weekly rules, and data backup
+          Cloud sync, real-time collaboration, weekly rules, and data backup
         </p>
+      </div>
+
+      {/* Supabase Cloud Sync Card */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', border: '1px solid var(--border-glow)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Database size={18} color="var(--accent-primary)" />
+            <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>Supabase Cloud Sync</h3>
+          </div>
+          {cloudStatus === 'connected' ? (
+            <span className="badge badge-success" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span className="status-dot dot-live" /> Live Connected
+            </span>
+          ) : cloudStatus === 'connecting' ? (
+            <span className="badge badge-warning">🔄 Connecting...</span>
+          ) : (
+            <span className="badge badge-outline">📱 Offline / Local</span>
+          )}
+        </div>
+
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+          Connect Supabase so all friends can open your Vercel link on their phones, add expenses, and see live balances in real time!
+        </p>
+
+        {/* Group Code / Share Link */}
+        <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label className="form-label" style={{ marginBottom: 0 }}>Active Group ID / Room</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={groupInput}
+              onChange={e => setGroupInput(e.target.value)}
+              placeholder="e.g. apna-gang"
+              style={{ flex: 1 }}
+            />
+            {groupInput !== groupId && (
+              <button className="btn-secondary" style={{ padding: '0 12px' }} onClick={handleSwitchGroup}>
+                Switch
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+            <button
+              className="btn-primary"
+              style={{ flex: 1, padding: '9px 12px', fontSize: '0.82rem' }}
+              onClick={handleCopyInviteLink}
+            >
+              {copiedLink ? <CheckCircle2 size={15} /> : <Share2 size={15} />}
+              <span>{copiedLink ? 'Copied Link!' : 'Share Group Link (WhatsApp)'}</span>
+            </button>
+            {cloudStatus === 'connected' && (
+              <button
+                className="btn-secondary"
+                style={{ padding: '9px 12px', fontSize: '0.82rem' }}
+                onClick={refreshCloudData}
+                title="Refresh from Cloud"
+              >
+                <RefreshCw size={15} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Supabase Credentials Inputs */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="form-group">
+            <label className="form-label">Supabase Project URL</label>
+            <input
+              type="text"
+              value={supabaseUrl}
+              onChange={e => setSupabaseUrl(e.target.value)}
+              placeholder="https://xyzcompany.supabase.co"
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Supabase Anon Public Key</label>
+            <input
+              type="password"
+              value={supabaseKey}
+              onChange={e => setSupabaseKey(e.target.value)}
+              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={handleSaveCredentials}>
+              <Check size={16} />
+              <span>Save & Connect</span>
+            </button>
+            {creds.isConfigured && (
+              <button className="btn-secondary" onClick={handleClearCredentials}>
+                Disconnect
+              </button>
+            )}
+          </div>
+
+          <button
+            className="btn-secondary"
+            style={{ fontSize: '0.78rem', justifyContent: 'center' }}
+            onClick={() => setShowSqlModal(!showSqlModal)}
+          >
+            <Code size={14} />
+            <span>{showSqlModal ? 'Hide SQL Setup Script' : 'View / Copy SQL Setup Script'}</span>
+          </button>
+
+          {showSqlModal && (
+            <div style={{ background: 'var(--bg-card)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginTop: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent-primary)' }}>
+                  Supabase Dashboard ➔ SQL Editor
+                </span>
+                <button
+                  className="btn-secondary"
+                  style={{ padding: '4px 10px', fontSize: '0.72rem' }}
+                  onClick={handleCopySql}
+                >
+                  {copiedSql ? <Check size={12} /> : <Copy size={12} />}
+                  <span>{copiedSql ? 'Copied!' : 'Copy SQL'}</span>
+                </button>
+              </div>
+              <pre
+                style={{
+                  fontSize: '0.7rem',
+                  color: 'var(--text-secondary)',
+                  overflowX: 'auto',
+                  maxHeight: '160px',
+                  background: 'var(--bg-input)',
+                  padding: '8px',
+                  borderRadius: 'var(--radius-sm)',
+                }}
+              >
+                {SQL_SCHEMA_SNIPPET}
+              </pre>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* General Settings Card */}
@@ -292,11 +545,11 @@ export default function SettingsView() {
         </div>
       </div>
 
-      {/* Data Backup & Export Section (Spec 23 & 24) */}
+      {/* Data Backup & Export Section */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Data Safety & Backup</h3>
         <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-          All data is automatically kept safe on this device. You can download a full JSON backup or export to Excel/CSV.
+          All data is kept safe locally and synced to the cloud if Supabase is connected. You can also export backups.
         </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
