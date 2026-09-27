@@ -329,12 +329,12 @@ export function ExpenseProvider({ children }) {
     const creds = getSupabaseCredentials();
     if (!creds.isConfigured) return;
 
-    // Refresh every 5 seconds when tab is open
+    // Refresh every 3.5 seconds when tab is open for guaranteed always-on sync
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         refreshCloudData();
       }
-    }, 5000);
+    }, 3500);
 
     const onVisible = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
@@ -344,11 +344,15 @@ export function ExpenseProvider({ children }) {
 
     window.addEventListener('focus', onVisible);
     window.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    window.addEventListener('online', onVisible);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onVisible);
       window.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+      window.removeEventListener('online', onVisible);
     };
   }, [refreshCloudData]);
 
