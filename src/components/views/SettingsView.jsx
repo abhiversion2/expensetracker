@@ -257,18 +257,6 @@ export default function SettingsView() {
     });
   };
 
-  const handlePromptLoadDemo = () => {
-    setConfirmDialog({
-      title: 'Load Realistic Sample Data?',
-      message: 'This will load sample group expenses (dinner, fuel, movie, tea, groceries) so you can test settlements, weekly lowest-spender celebrations, and charts immediately.',
-      confirmText: 'Load Demo Data',
-      isDanger: false,
-      onConfirm: () => {
-        loadSampleData();
-      },
-    });
-  };
-
   return (
     <div className="main-content animate-fade-in" style={{ paddingBottom: '30px' }}>
       {/* Settings Header */}
@@ -651,14 +639,9 @@ export default function SettingsView() {
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Data Management</h3>
 
-        <button className="btn-secondary" onClick={handlePromptLoadDemo}>
-          <RefreshCw size={15} color="var(--accent-primary)" />
-          <span>Load Realistic Demo Expenses</span>
-        </button>
-
         <button className="btn-danger" onClick={handlePromptReset}>
           <RotateCcw size={15} />
-          <span>Reset Group to Clean State</span>
+          <span>Reset Group to Clean State (Erase All Expenses)</span>
         </button>
       </div>
     </div>

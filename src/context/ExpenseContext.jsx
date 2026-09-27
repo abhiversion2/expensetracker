@@ -47,9 +47,11 @@ export function ExpenseProvider({ children }) {
     return loadFromStorage(STORAGE_KEYS.MEMBERS, DEFAULT_MEMBERS);
   });
 
-  // Expenses state
+  // Expenses state: empty by default, automatically purging past sample data
   const [expenses, setExpenses] = useState(() => {
-    return loadFromStorage(STORAGE_KEYS.EXPENSES, SAMPLE_EXPENSES);
+    const stored = loadFromStorage(STORAGE_KEYS.EXPENSES, []);
+    const sampleIds = new Set(['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']);
+    return (stored || []).filter(e => !sampleIds.has(e.id));
   });
 
   // Categories state
@@ -129,7 +131,10 @@ export function ExpenseProvider({ children }) {
       const remoteData = await fetchRemoteGroupData(groupId);
       if (remoteData && remoteData.group) {
         if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
-        if (remoteData.expenses !== null && remoteData.expenses !== undefined) setExpenses(remoteData.expenses);
+        if (remoteData.expenses !== null && remoteData.expenses !== undefined) {
+          const sampleIds = new Set(['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']);
+          setExpenses(remoteData.expenses.filter(e => !sampleIds.has(e.id)));
+        }
         if (remoteData.group?.settings) {
           setSettings(prev => ({
             ...prev,
@@ -170,9 +175,15 @@ export function ExpenseProvider({ children }) {
         const remoteData = await fetchRemoteGroupData(groupId);
         if (!isMounted) return;
 
+        // Clean out any lingering sample data from Supabase
+        client.from('expenses').delete().in('id', ['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']).eq('group_id', groupId);
+
         if (remoteData && remoteData.group) {
           if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
-          if (remoteData.expenses !== null && remoteData.expenses !== undefined) setExpenses(remoteData.expenses);
+          if (remoteData.expenses !== null && remoteData.expenses !== undefined) {
+            const sampleIds = new Set(['exp_1', 'exp_2', 'exp_3', 'exp_4', 'exp_5', 'exp_6']);
+            setExpenses(remoteData.expenses.filter(e => !sampleIds.has(e.id)));
+          }
           if (remoteData.group?.settings) {
             setSettings(prev => ({
               ...prev,
@@ -183,7 +194,7 @@ export function ExpenseProvider({ children }) {
           }
         } else if (remoteData) {
           // First time this group opened: seed current data to Supabase
-          await seedGroupToSupabase(groupId, { settings, members, expenses });
+          await seedGroupToSupabase(groupId, { settings, members, expenses: [] });
         }
 
         if (isMounted) {
@@ -540,14 +551,17 @@ export function ExpenseProvider({ children }) {
   };
 
   // Reset all data to clean default members
-  const resetAllData = () => {
+  const resetAllData = async () => {
     clearAllStorage();
     setMembers(DEFAULT_MEMBERS);
     setExpenses([]);
     setCategories(DEFAULT_CATEGORIES);
     setSettings(DEFAULT_SETTINGS);
-    seedGroupToSupabase(groupId, { settings: DEFAULT_SETTINGS, members: DEFAULT_MEMBERS, expenses: [] });
-    showToast('App reset to clean state', 'info');
+    const client = getSupabaseClient();
+    if (client) {
+      await client.from('expenses').delete().eq('group_id', groupId);
+    }
+    showToast('App reset to clean state (0 expenses)', 'info');
   };
 
   // Calculations
