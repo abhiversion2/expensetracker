@@ -119,7 +119,7 @@ export async function fetchRemoteGroupData(groupId) {
             amount: Number(e.amount),
             paidBy: e.paid_by,
             date: e.date,
-            time: e.time,
+            time: e.time || '',
             category: e.category,
             notes: e.notes || '',
             participants: e.participants || [],
@@ -139,16 +139,17 @@ export async function fetchRemoteGroupData(groupId) {
  */
 export async function seedGroupToSupabase(groupId, initialData) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
     // Upsert group record
-    await client.from('groups').upsert({
+    const { error: gErr } = await client.from('groups').upsert({
       id: groupId,
       name: initialData.settings?.groupName || 'Apna Gang',
       currency: initialData.settings?.currency || '₹',
       settings: initialData.settings || {},
     });
+    if (gErr) console.warn('Error seeding group:', gErr);
 
     // Upsert members
     if (initialData.members?.length) {
@@ -160,7 +161,8 @@ export async function seedGroupToSupabase(groupId, initialData) {
         initials: m.initials,
         created_at: m.createdAt || new Date().toISOString(),
       }));
-      await client.from('members').upsert(rows);
+      const { error: mErr } = await client.from('members').upsert(rows);
+      if (mErr) console.warn('Error seeding members:', mErr);
     }
 
     // Upsert initial expenses
@@ -172,17 +174,21 @@ export async function seedGroupToSupabase(groupId, initialData) {
         amount: Number(e.amount),
         paid_by: e.paidBy,
         date: e.date,
-        time: e.time,
+        time: e.time || '',
         category: e.category,
-        notes: e.notes,
-        participants: e.participants,
-        split_type: e.splitType,
+        notes: e.notes || '',
+        participants: e.participants || [],
+        split_type: e.splitType || 'equal',
         created_at: e.createdAt || new Date().toISOString(),
       }));
-      await client.from('expenses').upsert(rows);
+      const { error: eErr } = await client.from('expenses').upsert(rows);
+      if (eErr) console.warn('Error seeding expenses:', eErr);
     }
+
+    return { success: true };
   } catch (err) {
     console.error('Supabase seeding error:', err);
+    return { success: false, error: err };
   }
 }
 
@@ -191,25 +197,38 @@ export async function seedGroupToSupabase(groupId, initialData) {
  */
 export async function syncExpenseToSupabase(groupId, expense) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
-    await client.from('expenses').upsert({
+    // Ensure parent group row exists so foreign key never fails
+    await client.from('groups').upsert({
+      id: groupId,
+      name: 'Apna Gang',
+    });
+
+    const { error } = await client.from('expenses').upsert({
       id: expense.id,
       group_id: groupId,
       description: expense.description,
       amount: Number(expense.amount),
       paid_by: expense.paidBy,
       date: expense.date,
-      time: expense.time,
+      time: expense.time || '',
       category: expense.category,
-      notes: expense.notes,
-      participants: expense.participants,
-      split_type: expense.splitType,
+      notes: expense.notes || '',
+      participants: expense.participants || [],
+      split_type: expense.splitType || 'equal',
       created_at: expense.createdAt || new Date().toISOString(),
     });
+
+    if (error) {
+      console.error('Error syncing expense to Supabase:', error);
+      return { success: false, error };
+    }
+    return { success: true };
   } catch (err) {
     console.error('Error syncing expense to Supabase:', err);
+    return { success: false, error: err };
   }
 }
 
@@ -218,12 +237,18 @@ export async function syncExpenseToSupabase(groupId, expense) {
  */
 export async function deleteExpenseFromSupabase(expenseId) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
-    await client.from('expenses').delete().eq('id', expenseId);
+    const { error } = await client.from('expenses').delete().eq('id', expenseId);
+    if (error) {
+      console.error('Error deleting expense from Supabase:', error);
+      return { success: false, error };
+    }
+    return { success: true };
   } catch (err) {
     console.error('Error deleting expense from Supabase:', err);
+    return { success: false, error: err };
   }
 }
 
@@ -232,10 +257,12 @@ export async function deleteExpenseFromSupabase(expenseId) {
  */
 export async function syncMemberToSupabase(groupId, member) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
-    await client.from('members').upsert({
+    await client.from('groups').upsert({ id: groupId, name: 'Apna Gang' });
+
+    const { error } = await client.from('members').upsert({
       id: member.id,
       group_id: groupId,
       name: member.name,
@@ -243,8 +270,15 @@ export async function syncMemberToSupabase(groupId, member) {
       initials: member.initials,
       created_at: member.createdAt || new Date().toISOString(),
     });
+
+    if (error) {
+      console.error('Error syncing member to Supabase:', error);
+      return { success: false, error };
+    }
+    return { success: true };
   } catch (err) {
     console.error('Error syncing member to Supabase:', err);
+    return { success: false, error: err };
   }
 }
 
@@ -253,12 +287,18 @@ export async function syncMemberToSupabase(groupId, member) {
  */
 export async function deleteMemberFromSupabase(memberId) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
-    await client.from('members').delete().eq('id', memberId);
+    const { error } = await client.from('members').delete().eq('id', memberId);
+    if (error) {
+      console.error('Error deleting member from Supabase:', error);
+      return { success: false, error };
+    }
+    return { success: true };
   } catch (err) {
     console.error('Error deleting member from Supabase:', err);
+    return { success: false, error: err };
   }
 }
 
@@ -267,16 +307,102 @@ export async function deleteMemberFromSupabase(memberId) {
  */
 export async function syncGroupSettingsToSupabase(groupId, settings) {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return { success: false, error: 'Not configured' };
 
   try {
-    await client.from('groups').upsert({
+    const { error } = await client.from('groups').upsert({
       id: groupId,
       name: settings.groupName || 'Apna Gang',
       currency: settings.currency || '₹',
       settings: settings,
     });
+
+    if (error) {
+      console.error('Error syncing group settings to Supabase:', error);
+      return { success: false, error };
+    }
+    return { success: true };
   } catch (err) {
     console.error('Error syncing group settings to Supabase:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Comprehensive Connection Diagnostic Test
+ */
+export async function testSupabaseConnection(groupId) {
+  const { url, isConfigured } = getSupabaseCredentials();
+  if (!isConfigured) {
+    return {
+      ok: false,
+      message: 'Supabase credentials missing. Check Vercel environment variables or Settings.',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return { ok: false, message: 'Could not create Supabase client with given credentials.' };
+  }
+
+  try {
+    // 1. Check groups table
+    const { error: groupErr } = await client.from('groups').select('id').limit(1);
+    if (groupErr) {
+      return {
+        ok: false,
+        message: `Table 'groups' error: ${groupErr.message}. Please execute the SQL setup script in Supabase SQL Editor.`,
+      };
+    }
+
+    // 2. Check members table
+    const { error: memberErr } = await client.from('members').select('id').limit(1);
+    if (memberErr) {
+      return {
+        ok: false,
+        message: `Table 'members' error: ${memberErr.message}. Run supabase-schema.sql in Supabase.`,
+      };
+    }
+
+    // 3. Check expenses table
+    const { error: expenseErr } = await client.from('expenses').select('id').limit(1);
+    if (expenseErr) {
+      return {
+        ok: false,
+        message: `Table 'expenses' error: ${expenseErr.message}. Run supabase-schema.sql in Supabase.`,
+      };
+    }
+
+    // 4. Test write permission
+    const testId = `ping_${Date.now()}`;
+    await client.from('groups').upsert({ id: groupId, name: 'Apna Gang' });
+    const { error: writeErr } = await client.from('expenses').upsert({
+      id: testId,
+      group_id: groupId,
+      description: '__test_ping__',
+      amount: 1,
+      paid_by: 'm_prabhat',
+      date: '2026-01-01',
+    });
+
+    if (writeErr) {
+      return {
+        ok: false,
+        message: `Write permission test failed: ${writeErr.message}. Check Row Level Security (RLS) policies.`,
+      };
+    }
+
+    // Clean up
+    await client.from('expenses').delete().eq('id', testId);
+
+    return {
+      ok: true,
+      message: 'Supabase connection & read/write permissions verified successfully!',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Connection error: ${err.message || 'Unknown network error'}.`,
+    };
   }
 }

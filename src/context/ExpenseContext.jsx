@@ -31,6 +31,7 @@ import {
   syncMemberToSupabase,
   deleteMemberFromSupabase,
   syncGroupSettingsToSupabase,
+  testSupabaseConnection,
 } from '../utils/supabase';
 
 const ExpenseContext = createContext(null);
@@ -197,13 +198,16 @@ export function ExpenseProvider({ children }) {
 
     initCloud();
 
-    // Subscribe to Realtime postgres changes
+    // Subscribe to Realtime postgres changes without strict filter for maximum reliability
     const channel = client
       .channel(`sync_${groupId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'expenses', filter: `group_id=eq.${groupId}` },
+        { event: '*', schema: 'public', table: 'expenses' },
         payload => {
+          const eventGroupId = payload.new?.group_id || payload.old?.group_id;
+          if (eventGroupId && eventGroupId !== groupId) return;
+
           if (payload.eventType === 'INSERT') {
             const newExp = {
               id: payload.new.id,
@@ -211,7 +215,7 @@ export function ExpenseProvider({ children }) {
               amount: Number(payload.new.amount),
               paidBy: payload.new.paid_by,
               date: payload.new.date,
-              time: payload.new.time,
+              time: payload.new.time || '',
               category: payload.new.category,
               notes: payload.new.notes || '',
               participants: payload.new.participants || [],
@@ -222,7 +226,7 @@ export function ExpenseProvider({ children }) {
               if (prev.some(e => e.id === newExp.id)) return prev;
               return [newExp, ...prev];
             });
-            showToast(`🔔 New expense synced: "${newExp.description}" (₹${newExp.amount})`, 'info');
+            showToast(`🔔 Synced: Added "${newExp.description}" (₹${newExp.amount})`, 'info');
           } else if (payload.eventType === 'UPDATE') {
             const updatedExp = {
               id: payload.new.id,
@@ -230,7 +234,7 @@ export function ExpenseProvider({ children }) {
               amount: Number(payload.new.amount),
               paidBy: payload.new.paid_by,
               date: payload.new.date,
-              time: payload.new.time,
+              time: payload.new.time || '',
               category: payload.new.category,
               notes: payload.new.notes || '',
               participants: payload.new.participants || [],
@@ -246,8 +250,11 @@ export function ExpenseProvider({ children }) {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'members', filter: `group_id=eq.${groupId}` },
+        { event: '*', schema: 'public', table: 'members' },
         payload => {
+          const eventGroupId = payload.new?.group_id || payload.old?.group_id;
+          if (eventGroupId && eventGroupId !== groupId) return;
+
           if (payload.eventType === 'INSERT') {
             const newMember = {
               id: payload.new.id,
@@ -278,9 +285,10 @@ export function ExpenseProvider({ children }) {
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${groupId}` },
+        { event: 'UPDATE', schema: 'public', table: 'groups' },
         payload => {
-          if (payload.new.settings) {
+          if (payload.new?.id && payload.new.id !== groupId) return;
+          if (payload.new?.settings) {
             setSettings(prev => ({
               ...prev,
               ...payload.new.settings,
@@ -291,13 +299,47 @@ export function ExpenseProvider({ children }) {
           setCloudLastSynced(new Date());
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          setCloudStatus('connected');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('[Supabase Realtime] Channel error:', err);
+        }
+      });
 
     return () => {
       isMounted = false;
       client.removeChannel(channel);
     };
   }, [groupId, showToast]);
+
+  // Automatic polling heartbeat & visibility synchronization
+  useEffect(() => {
+    const creds = getSupabaseCredentials();
+    if (!creds.isConfigured) return;
+
+    // Refresh every 5 seconds when tab is open
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshCloudData();
+      }
+    }, 5000);
+
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshCloudData();
+      }
+    };
+
+    window.addEventListener('focus', onVisible);
+    window.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onVisible);
+      window.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshCloudData]);
 
   const changeGroupId = (newId) => {
     const clean = setActiveGroupId(newId);
@@ -381,7 +423,7 @@ export function ExpenseProvider({ children }) {
   };
 
   // ----------------- Expense Actions -----------------
-  const addExpense = (expenseData) => {
+  const addExpense = async (expenseData) => {
     const newId = `exp_${Date.now()}`;
     const newExpense = {
       ...expenseData,
@@ -390,12 +432,16 @@ export function ExpenseProvider({ children }) {
     };
 
     setExpenses(prev => [newExpense, ...prev]);
-    syncExpenseToSupabase(groupId, newExpense);
     showToast(`Added "${newExpense.description}" (₹${newExpense.amount})`, 'success');
+
+    const res = await syncExpenseToSupabase(groupId, newExpense);
+    if (res && res.error) {
+      showToast(`⚠️ Cloud sync failed: ${res.error.message || 'Check database tables in Supabase'}`, 'error');
+    }
     return true;
   };
 
-  const updateExpense = (id, updatedFields) => {
+  const updateExpense = async (id, updatedFields) => {
     let target = null;
     setExpenses(prev =>
       prev.map(e => {
@@ -406,25 +452,31 @@ export function ExpenseProvider({ children }) {
         return e;
       })
     );
-    if (target) {
-      syncExpenseToSupabase(groupId, target);
-    }
     showToast('Expense updated successfully', 'success');
+    if (target) {
+      const res = await syncExpenseToSupabase(groupId, target);
+      if (res && res.error) {
+        showToast(`⚠️ Cloud update failed: ${res.error.message}`, 'error');
+      }
+    }
     return true;
   };
 
-  const deleteExpense = (id) => {
+  const deleteExpense = async (id) => {
     const target = expenses.find(e => e.id === id);
     setExpenses(prev => prev.filter(e => e.id !== id));
-    deleteExpenseFromSupabase(id);
     showToast(`Deleted "${target?.description || 'Expense'}"`, 'info');
     if (selectedExpenseDetails?.id === id) {
       setSelectedExpenseDetails(null);
     }
+    const res = await deleteExpenseFromSupabase(id);
+    if (res && res.error) {
+      showToast(`⚠️ Cloud delete failed: ${res.error.message}`, 'error');
+    }
   };
 
   // Record a settlement payment directly
-  const recordSettlement = (fromMemberId, toMemberId, amount) => {
+  const recordSettlement = async (fromMemberId, toMemberId, amount) => {
     const fromMember = members.find(m => m.id === fromMemberId);
     const toMember = members.find(m => m.id === toMemberId);
     if (!fromMember || !toMember || amount <= 0) return false;
@@ -447,8 +499,11 @@ export function ExpenseProvider({ children }) {
     };
 
     setExpenses(prev => [settlementExpense, ...prev]);
-    syncExpenseToSupabase(groupId, settlementExpense);
     showToast(`Settled ₹${amount}: ${fromMember.name} paid ${toMember.name}`, 'success');
+    const res = await syncExpenseToSupabase(groupId, settlementExpense);
+    if (res && res.error) {
+      showToast(`⚠️ Cloud settlement failed: ${res.error.message}`, 'error');
+    }
     return true;
   };
 
@@ -543,6 +598,7 @@ export function ExpenseProvider({ children }) {
         cloudStatus,
         cloudLastSynced,
         refreshCloudData,
+        testSupabaseConnection,
         // Actions
         addMember,
         updateMember,

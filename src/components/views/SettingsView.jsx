@@ -67,11 +67,27 @@ ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public access for groups" ON public.groups FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public access for members" ON public.members FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public access for expenses" ON public.expenses FOR ALL USING (true) WITH CHECK (true);
+-- 3. Set Replica Identity to FULL so Realtime events contain complete data
+ALTER TABLE public.groups REPLICA IDENTITY FULL;
+ALTER TABLE public.members REPLICA IDENTITY FULL;
+ALTER TABLE public.expenses REPLICA IDENTITY FULL;
 
-BEGIN;
-  DROP PUBLICATION IF EXISTS supabase_realtime;
-  CREATE PUBLICATION supabase_realtime FOR TABLE public.groups, public.members, public.expenses;
-COMMIT;`;
+-- 4. Enable Supabase Realtime safely
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.groups;
+  EXCEPTION WHEN others THEN NULL;
+  END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members;
+  EXCEPTION WHEN others THEN NULL;
+  END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.expenses;
+  EXCEPTION WHEN others THEN NULL;
+  END;
+END $$;`;
 
 export default function SettingsView() {
   const {
@@ -91,6 +107,7 @@ export default function SettingsView() {
     cloudStatus,
     cloudLastSynced,
     refreshCloudData,
+    testSupabaseConnection,
   } = useExpenses();
 
   const fileInputRef = useRef(null);
@@ -103,6 +120,8 @@ export default function SettingsView() {
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   // Save Supabase credentials directly
   const handleSaveCredentials = () => {
@@ -141,6 +160,24 @@ export default function SettingsView() {
     setCopiedLink(true);
     showToast('Group invite link copied to clipboard! Share on WhatsApp 🎉', 'success');
     setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testSupabaseConnection(groupId);
+      setTestResult(res);
+      if (res.ok) {
+        showToast('Supabase connected & verified!', 'success');
+      } else {
+        showToast('Connection test failed. Check details below.', 'error');
+      }
+    } catch (e) {
+      setTestResult({ ok: false, message: e.message || 'Test failed' });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const handleCopySql = () => {
@@ -340,6 +377,33 @@ export default function SettingsView() {
               </button>
             )}
           </div>
+
+          <button
+            className="btn-secondary"
+            style={{ fontSize: '0.82rem', justifyContent: 'center' }}
+            onClick={handleTestConnection}
+            disabled={testing}
+          >
+            <RefreshCw size={14} className={testing ? 'spin-icon' : ''} />
+            <span>{testing ? 'Testing Tables & Permissions...' : '🔍 Test Database Connection'}</span>
+          </button>
+
+          {testResult && (
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.78rem',
+                lineHeight: 1.4,
+                background: testResult.ok ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                border: `1px solid ${testResult.ok ? '#10b981' : '#ef4444'}`,
+                color: testResult.ok ? '#10b981' : '#f87171',
+              }}
+            >
+              {testResult.ok ? '✅ ' : '❌ '}
+              {testResult.message}
+            </div>
+          )}
 
           <button
             className="btn-secondary"
