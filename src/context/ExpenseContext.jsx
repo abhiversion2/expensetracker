@@ -126,9 +126,9 @@ export function ExpenseProvider({ children }) {
     try {
       setCloudStatus('connecting');
       const remoteData = await fetchRemoteGroupData(groupId);
-      if (remoteData?.group || remoteData?.members?.length || remoteData?.expenses?.length) {
-        if (remoteData.members?.length) setMembers(remoteData.members);
-        if (remoteData.expenses !== null) setExpenses(remoteData.expenses);
+      if (remoteData && remoteData.group) {
+        if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
+        if (remoteData.expenses !== null && remoteData.expenses !== undefined) setExpenses(remoteData.expenses);
         if (remoteData.group?.settings) {
           setSettings(prev => ({
             ...prev,
@@ -137,7 +137,7 @@ export function ExpenseProvider({ children }) {
             currency: remoteData.group.currency || prev.currency,
           }));
         }
-      } else {
+      } else if (remoteData) {
         await seedGroupToSupabase(groupId, { settings, members, expenses });
       }
       setCloudStatus('connected');
@@ -169,9 +169,9 @@ export function ExpenseProvider({ children }) {
         const remoteData = await fetchRemoteGroupData(groupId);
         if (!isMounted) return;
 
-        if (remoteData?.group || remoteData?.members?.length || remoteData?.expenses?.length) {
-          if (remoteData.members?.length) setMembers(remoteData.members);
-          if (remoteData.expenses !== null) setExpenses(remoteData.expenses);
+        if (remoteData && remoteData.group) {
+          if (remoteData.members && remoteData.members.length > 0) setMembers(remoteData.members);
+          if (remoteData.expenses !== null && remoteData.expenses !== undefined) setExpenses(remoteData.expenses);
           if (remoteData.group?.settings) {
             setSettings(prev => ({
               ...prev,
@@ -180,7 +180,7 @@ export function ExpenseProvider({ children }) {
               currency: remoteData.group.currency || prev.currency,
             }));
           }
-        } else {
+        } else if (remoteData) {
           // First time this group opened: seed current data to Supabase
           await seedGroupToSupabase(groupId, { settings, members, expenses });
         }
